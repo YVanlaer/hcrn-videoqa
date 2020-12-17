@@ -10,7 +10,7 @@ train:
   restore: False
   max_epochs: 25
   word_dim: 768
-  module_dim: 512
+  module_dim: 768
   glove: False
   k_max_frame_level: 16
   k_max_clip_level: 8

@@ -234,7 +234,7 @@ class HCRNNetwork(nn.Module):
             self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
                                                              module_dim=module_dim, rnn_dim=module_dim)
             self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
-            self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes)
+            self.output_unit = OutputUnitOpenEnded(module_dim=module_dim, num_answers=self.num_classes)
 
         init_modules(self.modules(), w_init="xavier_uniform")
         #nn.init.uniform_(self.linguistic_input_unit.encoder_embed.weight, -1.0, 1.0)
@@ -255,12 +255,12 @@ class HCRNNetwork(nn.Module):
         batch_size = question.size(0)
         if self.question_type in ['frameqa', 'count', 'none']:
             # get image, word, and sentence embeddings
-            question_embedding = self.linguistic_input_unit(embeddings, question_len)
-            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
+            #question_embedding = self.linguistic_input_unit(embeddings, question_len)
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, embeddings)
 
-            visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
+            visual_embedding = self.feature_aggregation(embeddings, visual_embedding)
 
-            out = self.output_unit(question_embedding, visual_embedding)
+            out = self.output_unit(embeddings, visual_embedding)
         else:
             question_embedding = self.linguistic_input_unit(question, question_len)
             visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
