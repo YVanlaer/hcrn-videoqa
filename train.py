@@ -112,7 +112,7 @@ def train(cfg):
         for i, batch in enumerate(iter(train_loader)):
             progress = epoch + i / len(train_loader)
             _, _, answers, *batch_input = [todevice(x, device) for x in batch]
-            answers = answers.cpu().squeeze()
+            answers = answers.cuda().squeeze()
             batch_size = answers.size(0)
             optimizer.zero_grad()
             logits = model(*batch_input)
@@ -120,8 +120,8 @@ def train(cfg):
                 batch_agg = np.concatenate(np.tile(np.arange(batch_size).reshape([batch_size, 1]),
                                                    [1, 5])) * 5  # [0, 0, 0, 0, 0, 5, 5, 5, 5, 1, ...]
                 answers_agg = tile(answers, 0, 5)
-                loss = torch.max(torch.tensor(0.0).cpu(),
-                                 1.0 + logits - logits[answers_agg + torch.from_numpy(batch_agg).cpu()])
+                loss = torch.max(torch.tensor(0.0).cuda(),
+                                 1.0 + logits - logits[answers_agg + torch.from_numpy(batch_agg).cuda()])
                 loss = loss.sum()
                 loss.backward()
                 total_loss += loss.detach()
@@ -218,7 +218,7 @@ def tile(a, dim, n_tile):
     repeat_idx = [1] * a.dim()
     repeat_idx[dim] = n_tile
     a = a.repeat(*(repeat_idx))
-    order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)])).cpu()
+    order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)])).cuda()
     return torch.index_select(a, dim, order_index)
 
 
