@@ -9,7 +9,7 @@ train:
   batch_size: 32
   restore: False
   max_epochs: 25
-  word_dim: 300
+  word_dim: 768
   module_dim: 512
   glove: True
   k_max_frame_level: 16
