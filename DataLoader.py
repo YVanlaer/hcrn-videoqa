@@ -153,6 +153,7 @@ class VideoQADataLoader(DataLoader):
         with open(question_pt_path.replace('questions', 'embeddings'), 'rb') as f:
             obj_emb = pickle.load(f)
             embeddings = [o['embeddings'][0] for o in obj_emb]
+            questions_len = [o['length'] for o in obj_emb]
 
         print('loading appearance feature from %s' % (kwargs['appearance_feat']))
         with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
