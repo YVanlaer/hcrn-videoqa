@@ -39,22 +39,69 @@ def load_vocab(path):
         vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
     return vocab
 
+def subdivision(subtitle, subtitle_len, M, vocab):
+    """
+    Args:
+        subtitle: [array] (nb_subtitle, max_subtitle_length)
+        subtitle_len: [array] (nb_subtitle)
+        M: number of division
+        vocab: only to pad sequences
+    return:
+        tuple:
+        subdivisions [Tensor] (batch_size, M, max_subdivision_length)
+        subdivisions_len [Tensor] (batch_size)
+    """
+    subdivisions = []
+
+    max_subdivision_length = 0
+    subdivisions_len = np.zeros(subtitle.shape[0])
+    for b in range(subtitle.shape[0]):
+        stride_float = subtitle_len[b] / (M + 1)
+        step_float = 0
+        window_size = int(np.round(stride_float * 2))
+        position = 0
+        subdivisions_len[b] = window_size
+        max_subdivision_length = int(max(max_subdivision_length, window_size))
+
+        splits = []
+        while position + window_size <= subtitle_len[b] and len(splits) < 6:
+            split = subtitle[b][position:position+window_size]
+            splits += [split]
+            step_float += stride_float
+            position = int(step_float)
+            if position + window_size == subtitle_len[b] - 1:
+                position += 1
+        subdivisions += [splits]
+
+    # pad all sequences
+    null_token = int(vocab['subtitle_token_to_idx']['<NULL>'])
+    for b in range(subtitle.shape[0]):
+        for i in range(len(subdivisions[b])):
+            subdivisions[b][i] = np.hstack([subdivisions[b][i], np.array([null_token] * (max_subdivision_length - len(subdivisions[b][i])))])
+        subdivisions[b] = np.asarray(subdivisions[b])
+
+    return subdivisions, subdivisions_len
+
 
 class VideoQADataset(Dataset):
 
     def __init__(self, answers, ans_candidates, ans_candidates_len, questions, questions_len, video_ids, q_ids,
-                 app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index, embeddings):
+                 app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index, subtitles, subtitles_len, subdivisions, subdivisions_len, question_type):
         # convert data to tensor
         self.all_answers = answers
         self.all_questions = torch.LongTensor(np.asarray(questions))
         self.all_questions_len = torch.LongTensor(np.asarray(questions_len))
-        self.all_video_ids = torch.LongTensor(np.asarray(video_ids))
+        self.all_video_ids = np.asarray(video_ids)
         self.all_q_ids = q_ids
         self.app_feature_h5 = app_feature_h5
         self.motion_feature_h5 = motion_feature_h5
         self.app_feat_id_to_index = app_feat_id_to_index
         self.motion_feat_id_to_index = motion_feat_id_to_index
-        self.embeddings = torch.tensor(embeddings)
+        self.all_subtitles = torch.LongTensor(np.asarray(subtitles))
+        self.all_subtitles_len = torch.LongTensor(np.asarray(subtitles_len))
+        self.all_subsubtitles = torch.LongTensor(np.asarray(subdivisions))
+        self.all_subsubtitles_len = torch.LongTensor(np.asarray(subdivisions_len))
+        self.question_type_dataset = question_type
 
         if not np.any(ans_candidates):
             self.question_type = 'openended'
@@ -74,18 +121,28 @@ class VideoQADataset(Dataset):
         question_len = self.all_questions_len[index]
         video_idx = self.all_video_ids[index].item()
         question_idx = self.all_q_ids[index]
-        app_index = self.app_feat_id_to_index[str(video_idx)]
-        motion_index = self.motion_feat_id_to_index[str(video_idx)]
-        embeddings = self.embeddings[index]
-        with h5py.File(self.app_feature_h5, 'r') as f_app:
-            appearance_feat = f_app['resnet_features'][app_index]  # (8, 16, 2048)
-        with h5py.File(self.motion_feature_h5, 'r') as f_motion:
-            motion_feat = f_motion['resnext_features'][motion_index]  # (8, 2048)
-        appearance_feat = torch.from_numpy(appearance_feat)
-        motion_feat = torch.from_numpy(motion_feat)
+        if self.question_type_dataset != 'tvqa':
+            app_index = self.app_feat_id_to_index[str(video_idx)]
+            with h5py.File(self.app_feature_h5, 'r') as f_app:
+                appearance_feat = f_app['resnet_features'][app_index]  # (8, 16, 2048)
+            appearance_feat = torch.from_numpy(appearance_feat)
+            motion_index = self.motion_feat_id_to_index[str(video_idx)]
+            with h5py.File(self.motion_feature_h5, 'r') as f_motion:
+                motion_feat = f_motion['resnext_features'][motion_index]  # (8, 2048)
+            motion_feat = torch.from_numpy(motion_feat)
+        else:
+            with h5py.File(self.app_feature_h5, 'r') as f_app:
+                appearance_feat = f_app[video_idx]  # (8, 16, 2048)
+                appearance_feat = torch.from_numpy(np.asarray(appearance_feat))
+            motion_feat = torch.tensor(0)
+            video_idx = torch.tensor(0)
+        subtitle = self.all_subtitles[index]
+        subtitle_len = self.all_subtitles_len[index]
+        subsubtitles = self.all_subsubtitles[index]
+        subsubtitles_len = self.all_subsubtitles_len[index]
         return (
             video_idx, question_idx, answer, ans_candidates, ans_candidates_len, appearance_feat, motion_feat, question,
-            question_len, embeddings)
+            question_len, subtitle, subtitle_len, subsubtitles, subsubtitles_len)
 
     def __len__(self):
         return len(self.all_questions)
@@ -105,15 +162,26 @@ class VideoQADataLoader(DataLoader):
             obj = pickle.load(f)
             questions = obj['questions']
             questions_len = obj['questions_len']
-            video_ids = obj['video_ids']
+            if question_type == 'tvqa':
+                video_ids = obj['video_names']
+            else:
+                video_ids = obj['video_ids']
             q_ids = obj['question_id']
             answers = obj['answers']
             glove_matrix = obj['glove']
             ans_candidates = np.zeros(5)
             ans_candidates_len = np.zeros(5)
-            if question_type in ['action', 'transition']:
+            if question_type in ['action', 'transition', 'tvqa']:
                 ans_candidates = obj['ans_candidates']
                 ans_candidates_len = obj['ans_candidates_len']
+
+        if question_type == 'tvqa':
+            print('loading subtitles from %s' % (question_pt_path.replace('question', 'subtitle')))
+            with open(question_pt_path.replace('question', 'subtitle'), 'rb') as f:
+                obj = pickle.load(f)
+                subtitles = obj['subtitles']
+                subtitles_len = obj['subtitles_len']
+                glove_matrix_sub = obj['glove']
 
         if 'train_num' in kwargs:
             trained_num = kwargs.pop('train_num')
@@ -123,6 +191,8 @@ class VideoQADataLoader(DataLoader):
                 video_ids = video_ids[:trained_num]
                 q_ids = q_ids[:trained_num]
                 answers = answers[:trained_num]
+                subtitles = subtitles[:trained_num]
+                subtitles_len = subtitles_len[:trained_num]
                 if question_type in ['action', 'transition']:
                     ans_candidates = ans_candidates[:trained_num]
                     ans_candidates_len = ans_candidates_len[:trained_num]
@@ -134,6 +204,8 @@ class VideoQADataLoader(DataLoader):
                 video_ids = video_ids[:val_num]
                 q_ids = q_ids[:val_num]
                 answers = answers[:val_num]
+                subtitles = subtitles[:val_num]
+                subtitles_len = subtitles_len[:val_num]
                 if question_type in ['action', 'transition']:
                     ans_candidates = ans_candidates[:val_num]
                     ans_candidates_len = ans_candidates_len[:val_num]
@@ -145,34 +217,39 @@ class VideoQADataLoader(DataLoader):
                 video_ids = video_ids[:test_num]
                 q_ids = q_ids[:test_num]
                 answers = answers[:test_num]
+                subtitles = subtitles[:test_num]
+                subtitles_len = subtitles_len[:test_num]
                 if question_type in ['action', 'transition']:
                     ans_candidates = ans_candidates[:test_num]
                     ans_candidates_len = ans_candidates_len[:test_num]
 
-        print('loading questions embeddings from %s' % (question_pt_path.replace('questions', 'embeddings')))
-        with open(question_pt_path.replace('questions', 'embeddings'), 'rb') as f:
-            obj_emb = pickle.load(f)
-            embeddings = [o['embeddings'][0] for o in obj_emb]
-            questions_len = [o['length'] for o in obj_emb]
+        subdivisions, subdivisions_len = subdivision(subtitles, subtitles_len, 6, vocab)
 
-        print('loading appearance feature from %s' % (kwargs['appearance_feat']))
-        with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
-            app_video_ids = app_features_file['ids'][()]
-        app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
-        print('loading motion feature from %s' % (kwargs['motion_feat']))
-        with h5py.File(kwargs['motion_feat'], 'r') as motion_features_file:
-            motion_video_ids = motion_features_file['ids'][()]
-        motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+        # subdivisions = subdivisions_len = np.zeros(len(questions))
+        if question_type != 'tvqa':
+            print('loading appearance feature from %s' % (kwargs['appearance_feat']))
+            with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
+                app_video_ids = app_features_file['ids'][()]
+            app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+            print('loading motion feature from %s' % (kwargs['motion_feat']))
+            with h5py.File(kwargs['motion_feat'], 'r') as motion_features_file:
+                motion_video_ids = motion_features_file['ids'][()]
+            motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+        else:
+            print('loading appearance feature from %s' % (kwargs['appearance_feat']))
+            app_feat_id_to_index = None
+            motion_feat_id_to_index = None
         self.app_feature_h5 = kwargs.pop('appearance_feat')
         self.motion_feature_h5 = kwargs.pop('motion_feat')
         self.dataset = VideoQADataset(answers, ans_candidates, ans_candidates_len, questions, questions_len,
                                       video_ids, q_ids,
                                       self.app_feature_h5, app_feat_id_to_index, self.motion_feature_h5,
-                                      motion_feat_id_to_index, embeddings)
+                                      motion_feat_id_to_index, subtitles, subtitles_len, subdivisions, subdivisions_len, question_type)
 
         self.vocab = vocab
         self.batch_size = kwargs['batch_size']
         self.glove_matrix = glove_matrix
+        self.glove_matrix_sub = glove_matrix_sub
 
         super().__init__(self.dataset, **kwargs)
 

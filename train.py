@@ -112,16 +112,23 @@ def train(cfg):
         for i, batch in enumerate(iter(train_loader)):
             progress = epoch + i / len(train_loader)
             _, _, answers, *batch_input = [todevice(x, device) for x in batch]
-            answers = answers.cuda().squeeze()
+            if device == 'cuda':
+                answers = answers.cuda().squeeze()
+            else:
+                answers = answers.cpu().squeeze()
             batch_size = answers.size(0)
             optimizer.zero_grad()
             logits = model(*batch_input)
-            if cfg.dataset.question_type in ['action', 'transition']:
+            if cfg.dataset.question_type in ['action', 'transition', 'tvqa']:
                 batch_agg = np.concatenate(np.tile(np.arange(batch_size).reshape([batch_size, 1]),
                                                    [1, 5])) * 5  # [0, 0, 0, 0, 0, 5, 5, 5, 5, 1, ...]
-                answers_agg = tile(answers, 0, 5)
-                loss = torch.max(torch.tensor(0.0).cuda(),
-                                 1.0 + logits - logits[answers_agg + torch.from_numpy(batch_agg).cuda()])
+                answers_agg = tile(answers, 0, 5, device)
+                if device == 'cuda':
+                    loss = torch.max(torch.tensor(0.0).cuda(),
+                                    1.0 + logits - logits[answers_agg + torch.from_numpy(batch_agg).cuda()])
+                else:
+                    loss = torch.max(torch.tensor(0.0).cpu(),
+                                    1.0 + logits - logits[answers_agg + torch.from_numpy(batch_agg).cpu()])
                 loss = loss.sum()
                 loss.backward()
                 total_loss += loss.detach()
@@ -213,12 +220,15 @@ def train(cfg):
             sys.stdout.flush()
 
 # Credit https://discuss.pytorch.org/t/how-to-tile-a-tensor/13853/4
-def tile(a, dim, n_tile):
+def tile(a, dim, n_tile, device):
     init_dim = a.size(dim)
     repeat_idx = [1] * a.dim()
     repeat_idx[dim] = n_tile
     a = a.repeat(*(repeat_idx))
-    order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)])).cuda()
+    if device == 'cuda':
+        order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)])).cuda()
+    else:
+        order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)])).cpu()
     return torch.index_select(a, dim, order_index)
 
 
@@ -258,8 +268,8 @@ def main():
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)
 
-    assert cfg.dataset.name in ['tgif-qa', 'msrvtt-qa', 'msvd-qa']
-    assert cfg.dataset.question_type in ['frameqa', 'count', 'transition', 'action', 'none']
+    assert cfg.dataset.name in ['tgif-qa', 'msrvtt-qa', 'msvd-qa', 'tv-qa']
+    assert cfg.dataset.question_type in ['frameqa', 'count', 'transition', 'action', 'tvqa', 'none']
     # check if the data folder exists
     assert os.path.exists(cfg.dataset.data_dir)
     # check if k_max is set correctly
@@ -299,7 +309,8 @@ def main():
         cfg.dataset.appearance_feat = os.path.join(cfg.dataset.data_dir, cfg.dataset.appearance_feat.format(cfg.dataset.name, cfg.dataset.question_type))
         cfg.dataset.motion_feat = os.path.join(cfg.dataset.data_dir, cfg.dataset.motion_feat.format(cfg.dataset.name, cfg.dataset.question_type))
     else:
-        cfg.dataset.question_type = 'none'
+        if cfg.dataset.name != 'tv-qa':
+            cfg.dataset.question_type = 'none'
         cfg.dataset.appearance_feat = '{}_appearance_feat.h5'
         cfg.dataset.motion_feat = '{}_motion_feat.h5'
         cfg.dataset.vocab_json = '{}_vocab.json'

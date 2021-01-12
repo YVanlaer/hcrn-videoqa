@@ -1,0 +1,31 @@
+gpu_id: -1
+multi_gpus: False
+num_workers: 4
+seed: 666
+exp_name: 'expTV-QA'
+
+train:
+  lr: 0.0001
+  batch_size: 32
+  restore: False
+  max_epochs: 25
+  word_dim: 300
+  module_dim: 512
+  glove: True
+  k_max_frame_level: 8
+  k_max_clip_level: 6
+  spl_resolution: 1
+
+
+val:
+  flag: True
+
+test:
+  test_num: 0
+  write_preds: False
+
+dataset:
+  name: 'tv-qa'
+  question_type: 'tvqa'
+  data_dir: 'data/tv-qa'
+  save_dir: 'results/'
