@@ -283,6 +283,8 @@ class InputUnitTextual(nn.Module):
 
         # pass with every sub-subtitle:
         subsubtitle_embedding = torch.zeros((subsubtitle.shape[1], subtitle.shape[0], subtitle_embedding.shape[1]))
+        if subtitle.is_cuda:
+            subsubtitle_embedding = subsubtitle_embedding.to(subtitle.get_device())
         subsubtitle = torch.transpose(subsubtitle, 0, 1)
         for i in range(len(subsubtitle)):
             subsub_embed = self.encoder_embed(subsubtitle[i])  # (batch_size, seq_len, dim_word)
