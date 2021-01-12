@@ -32,7 +32,7 @@ def validate(cfg, model, data, device, write_preds=False):
                 answers = answers.to(device).squeeze()
             batch_size = answers.size(0)
             logits = model(*batch_input).to(device)
-            if cfg.dataset.question_type in ['action', 'transition']:
+            if cfg.dataset.question_type in ['action', 'transition', 'tvqa']:
                 preds = torch.argmax(logits.view(batch_size, 5), dim=1)
                 agreeings = (preds == answers)
             elif cfg.dataset.question_type == 'count':
@@ -43,19 +43,19 @@ def validate(cfg, model, data, device, write_preds=False):
                 preds = logits.detach().argmax(1)
                 agreeings = (preds == answers)
             if write_preds:
-                if cfg.dataset.question_type not in ['action', 'transition', 'count']:
+                if cfg.dataset.question_type not in ['action', 'transition', 'count', 'tvqa']:
                     preds = logits.argmax(1)
                 if cfg.dataset.question_type in ['action', 'transition']:
                     answer_vocab = data.vocab['question_answer_idx_to_token']
                 else:
                     answer_vocab = data.vocab['answer_idx_to_token']
                 for predict in preds:
-                    if cfg.dataset.question_type in ['count', 'transition', 'action']:
+                    if cfg.dataset.question_type in ['count', 'transition', 'action', 'tvqa']:
                         all_preds.append(predict.item())
                     else:
                         all_preds.append(answer_vocab[predict.item()])
                 for gt in answers:
-                    if cfg.dataset.question_type in ['count', 'transition', 'action']:
+                    if cfg.dataset.question_type in ['count', 'transition', 'action', 'tvqa']:
                         gts.append(gt.item())
                     else:
                         gts.append(answer_vocab[gt.item()])
@@ -84,8 +84,8 @@ if __name__ == '__main__':
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)
 
-    assert cfg.dataset.name in ['tgif-qa', 'msrvtt-qa', 'msvd-qa']
-    assert cfg.dataset.question_type in ['frameqa', 'count', 'transition', 'action', 'none']
+    assert cfg.dataset.name in ['tgif-qa', 'msrvtt-qa', 'msvd-qa', 'tv-qa']
+    assert cfg.dataset.question_type in ['frameqa', 'count', 'transition', 'action', 'none', 'tvqa']
     # check if the data folder exists
     assert os.path.exists(cfg.dataset.data_dir)
 
