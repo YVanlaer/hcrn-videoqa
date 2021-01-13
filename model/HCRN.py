@@ -49,7 +49,8 @@ class PreSelection(nn.Module):
         batch_agg = np.reshape(
             np.tile(np.expand_dims(np.arange(question_rep.shape[0]), axis=1), [1, 5]), [-1])
 
-        s_q_cat = torch.cat([subtitle_rep, question_rep * subtitle_rep, (ans_candidates_rep * subtitle_rep[batch_agg]).view((-1, self.module_dim * 5))], dim=-1)
+        s_q_cat = torch.cat([subtitle_rep, (question_rep * subtitle_rep.transpose(0,1)).transpose(0,1), (ans_candidates_rep * subtitle_rep[batch_agg].transpose(0,1)).transpose(0,1).view((-1, subtitle_rep.shape[1], self.module_dim * 5))], dim=-1)
+        #s_q_cat = torch.cat([subtitle_rep, question_rep * subtitle_rep, (ans_candidates_rep * subtitle_rep[batch_agg]).view((-1, self.module_dim * 5))], dim=-1)
         s_q_proj = self.s_q_proj(s_q_cat)
 
         return s_q_proj
@@ -75,7 +76,10 @@ class PreSelectionMulti(nn.Module):
         batch_agg_sub_ans = np.reshape(
             np.tile(np.expand_dims(np.arange(ans_candidates_rep.shape[0]), axis=1), [1, subsubtitle_rep.shape[1]]), [-1])
 
-        s_q_cat = torch.cat([subsubtitle_rep, question_rep[batch_agg_sub].view((-1, 6, self.module_dim)) * subsubtitle_rep, (ans_candidates_rep[batch_agg_sub_ans].view(-1, 6, self.module_dim) * subsubtitle_rep[batch_agg]).view((-1, 6, self.module_dim * 5))], dim=-1)
+        subsubtitle_rep = subsubtitle_rep.reshape((subsubtitle_rep.shape[2], -1, subsubtitle_rep.shape[1], subsubtitle_rep.shape[3]))
+        s_q_cat = torch.cat([subsubtitle_rep, question_rep[batch_agg_sub].view((-1, 6, self.module_dim)) * subsubtitle_rep, (ans_candidates_rep[batch_agg_sub_ans].view(-1, 6, self.module_dim) * subsubtitle_rep[:,batch_agg]).view((subsubtitle_rep.shape[0], -1, 6, self.module_dim * 5))], dim=-1)
+        s_q_cat = s_q_cat.view((-1, subsubtitle_rep.shape[2], subsubtitle_rep.shape[0], self.module_dim * 7))
+        #s_q_cat = torch.cat([subsubtitle_rep, question_rep[batch_agg_sub].view((-1, 6, self.module_dim)) * subsubtitle_rep.transpose(0,2).transpose(1,2), (ans_candidates_rep[batch_agg_sub_ans].view(-1, 6, self.module_dim) * subsubtitle_rep[batch_agg]).view((-1, 6, self.module_dim * 5))], dim=-1)
         s_q_proj = self.s_q_proj(s_q_cat)
 
         return s_q_proj
@@ -276,13 +280,16 @@ class InputUnitTextual(nn.Module):
                                                   enforce_sorted=False)
 
         self.encoder.flatten_parameters()
-        _, (subtitle_embedding, _) = self.encoder(embed)
-        if self.bidirectional:
-            subtitle_embedding = torch.cat([subtitle_embedding[0], subtitle_embedding[1]], -1)
+        #_, (subtitle_embedding, _) = self.encoder(embed)
+        subtitle_embedding, _ = self.encoder(embed)
+        subtitle_embedding, _ = nn.utils.rnn.pad_packed_sequence(subtitle_embedding, batch_first=True)
+        #if self.bidirectional:
+        #    subtitle_embedding = torch.cat([subtitle_embedding[0], subtitle_embedding[1]], -1)
         subtitle_embedding = self.subtitle_dropout(subtitle_embedding)
 
         # pass with every sub-subtitle:
-        subsubtitle_embedding = torch.zeros((subsubtitle.shape[1], subtitle.shape[0], subtitle_embedding.shape[1]))
+        #subsubtitle_embedding = torch.zeros((subsubtitle.shape[1], subtitle.shape[0], subtitle_embedding.shape[1]))
+        subsubtitle_embedding = torch.zeros((subsubtitle.shape[1], subtitle.shape[0], subsubtitle.shape[2], subtitle_embedding.shape[2]))
         if subtitle.is_cuda:
             subsubtitle_embedding = subsubtitle_embedding.to(subtitle.get_device())
         subsubtitle = torch.transpose(subsubtitle, 0, 1)
@@ -293,9 +300,11 @@ class InputUnitTextual(nn.Module):
                                                         enforce_sorted=False)
 
             self.encoder.flatten_parameters()
-            _, (subsub_embed, _) = self.encoder(embed)
-            if self.bidirectional:
-                subsub_embed = torch.cat([subsub_embed[0], subsub_embed[1]], -1)
+            #_, (subsub_embed, _) = self.encoder(embed)
+            subsub_embed, _ = self.encoder(embed)
+            subsub_embed, ç = nn.utils.rnn.pad_packed_sequence(subsub_embed, batch_first=True)
+            #if self.bidirectional:
+            #    subsub_embed = torch.cat([subsub_embed[0], subsub_embed[1]], -1)
             subsub_embed = self.subtitle_dropout(subsub_embed)
             subsubtitle_embedding[i] = subsub_embed
 
@@ -306,9 +315,10 @@ class InputUnitTextual(nn.Module):
         subtitle_embedding = self.pre_selection(question_embedding, subtitle_embedding, ans_candidates_embedding)
         subsubtitle_embedding = self.pre_selection_multi(question_embedding, subsubtitle_embedding, ans_candidates_embedding)
 
-        crn_output = self.crn_subtitle(torch.unbind(subsubtitle_embedding, dim=1), subtitle_embedding)
+        crn_output = self.crn_subtitle(torch.unbind(subsubtitle_embedding, dim=1), torch.max(subtitle_embedding, dim=1)[0].unsqueeze(1))
 
         crn_output = torch.max(torch.stack(crn_output), dim=0)[0]
+        crn_output = torch.max(crn_output, dim=1)[0]
 
         return crn_output
         # return subtitle_embedding, None

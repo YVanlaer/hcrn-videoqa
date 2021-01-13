@@ -75,8 +75,10 @@ def train(cfg):
     if cfg.train.glove:
         logging.info('load glove vectors')
         train_loader.glove_matrix = torch.FloatTensor(train_loader.glove_matrix).to(device)
-        #with torch.no_grad():
-            #model.linguistic_input_unit.encoder_embed.weight.set_(train_loader.glove_matrix)
+        train_loader.glove_matrix_sub = torch.FloatTensor(train_loader.glove_matrix_sub).to(device)
+        with torch.no_grad():
+            model.linguistic_input_unit.encoder_embed.weight.set_(train_loader.glove_matrix)
+            model.textual_input_unit.encoder_embed.weight.set_(train_loader.glove_matrix_sub)
     if torch.cuda.device_count() > 1 and cfg.multi_gpus:
         model = model.cuda()
         logging.info("Using {} GPUs".format(torch.cuda.device_count()))

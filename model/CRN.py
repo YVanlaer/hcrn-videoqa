@@ -56,6 +56,7 @@ class CRN(Module):
                     h_feat = torch.cat((g_feat, cond_feat), dim=-1)
                 elif len(g_feat.size()) == 3:
                     cond_feat_repeat = cond_feat.repeat(1, g_feat.size(1), 1)
+                    #cond_feat_repeat = cond_feat.repeat(g_feat.size(1), 1, 1).transpose(0, 1)
                     h_feat = torch.cat((g_feat, cond_feat_repeat), dim=-1)
                 if self.gating:
                     h_feat = self.activation(self.k_objects_fusion[scaleID](h_feat)) * torch.sigmoid(
